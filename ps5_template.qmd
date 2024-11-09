@@ -1,0 +1,502 @@
+---
+title: "Problem Set 5"
+author: "Zheng Cui & Xiaotian Tang"
+date: today
+format: 
+  pdf:
+    include-in-header: 
+       text: |
+         \usepackage{fvextra}
+         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+include-before-body:
+  text: |
+    \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
+      showspaces = false,
+      showtabs = false,
+      breaksymbolleft={},
+      breaklines
+    }
+output:
+  echo: false
+  eval: false
+---
+
+**Due 11/9 at 5:00PM Central. Worth 100 points + 10 points extra credit.**
+
+## Submission Steps (10 pts)
+1. This problem set is a paired problem set.
+2. Play paper, scissors, rock to determine who goes first. Call that person *Partner 1*.
+    - Partner 1 (name and cnet ID): Zheng Cui (zhengcui)
+    - Partner 2 (name and cnet ID): Xiaotian Tang (tangxiaotian)
+3. Partner 1 will accept the `ps5` and then share the link it creates with their partner. You can only share it with one partner so you will not be able to change it after your partner has accepted. 
+4. "This submission is our work alone and complies with the 30538 integrity policy." Add your initials to indicate your agreement: \*\*ZC\*\* \*\*XT\*\*
+5. "I have uploaded the names of anyone else other than my partner and I worked with on the problem set **NaN**"  (1 point)
+6. Late coins used this pset: \*\*\0\*\* Late coins left after submission: \*\*ZC:2, XT:3\*\*
+7. Knit your `ps5.qmd` to an PDF file to make `ps5.pdf`, 
+    * The PDF should not be more than 25 pages. Use `head()` and re-size figures when appropriate. 
+8. (Partner 1): push  `ps5.qmd` and `ps5.pdf` to your github repo.
+9. (Partner 1): submit `ps5.pdf` via Gradescope. Add your partner on Gradescope.
+10. (Partner 1): tag your submission in Gradescope
+
+\newpage
+
+```{python}
+import pandas as pd
+import altair as alt
+import time
+from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import warnings 
+warnings.filterwarnings('ignore')
+alt.renderers.enable("png")
+```
+
+
+## Step 1: Develop initial scraper and crawler
+
+### 1. Scraping (PARTNER 1)
+
+```{python}
+url = 'https://oig.hhs.gov/fraud/enforcement/'
+# get the content using request
+response = requests.get(url)
+# parse the contents using Beautiful Soup.
+soup = BeautifulSoup(response.text, "html.parser")
+# the info that we want has a special style.
+source = soup.find("ul", class_ = "usa-card-group padding-y-0" )
+rows = source.find_all('div', class_='usa-card__container')
+table_list = []
+for row in rows:
+  link = row.find("h2").a["href"]
+  title = row.find("h2").a.get_text(strip=True)
+  date = row.find("div").span.get_text(strip=True)
+  category = row.find("div").ul.get_text(strip=True)
+  row_list = [title,date,category,link]
+  table_list.append(row_list)
+
+tidy_df = pd.DataFrame(table_list, columns=["Title", "Date", "Category", "Link"])
+
+print(tidy_df.head())
+
+```
+
+
+### 2. Crawling (PARTNER 1)
+
+```{python}
+agency_list =[]
+for url in tidy_df["Link"]:
+  response = requests.get("https://oig.hhs.gov"+ url)
+  soup = BeautifulSoup(response.text, "html.parser")
+  the_span_tag = soup.find("span", text=lambda x: x and x.strip() == "Agency:")
+  if the_span_tag:
+    agency = the_span_tag.find_parent("li").get_text().replace("Agency:", "").strip()
+  else:
+    agency = "" 
+  agency_list.append(agency)
+
+tidy_df["Agency"] = agency_list
+
+print(tidy_df.head())
+
+```
+
+## Step 2: Making the scraper dynamic
+
+### 1. Turning the scraper into a function 
+
+* a. Pseudo-Code (PARTNER 2)
+```{json}
+
+def function(month, year):
+# first check the year 
+  if year < 2013: 
+    print("Please restrict to year >= 2013")
+    return
+  else:
+    continue
+
+  while True:
+    if page == 1:
+      set url = "https://oig.hhs.gov/fraud/enforcement/"
+    else:
+      set url = "https://oig.hhs.gov/fraud/enforcement/?page=" + page
+
+    scraping like what we do in step 1, 
+      if Date < input_time: 
+        break out of the while loop
+      else:
+        continue
+  end while
+  
+  crawling like what we do in step 1 to obtain agency
+  
+  return tidy_df
+
+```
+
+* b. Create Dynamic Scraper (PARTNER 2)
+
+```{python}
+
+def fancy_scraper(start_year, start_month):
+  if start_year < 2013:
+    print("Please note that only enforcement actions from 2013 onwards are available.")
+    return
+  
+  stop_scraping = False
+  table_list = []
+  page = 1
+  while stop_scraping == False:
+# url change with page
+    url = 'https://oig.hhs.gov/fraud/enforcement/' if page == 1 else f'https://oig.hhs.gov/fraud/enforcement/?page={page}'
+
+# repeat what we do in step 1
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, "html.parser")
+    source = soup.find("ul", class_ = "usa-card-group padding-y-0" )
+    rows = source.find_all('div', class_='usa-card__container')
+
+    for row in rows:
+      date_text = row.find("div").span.get_text(strip=True)
+      date = datetime.strptime(date_text, "%B %d, %Y") # format into datetime object
+      # create a stop logic
+      if date.year < start_year or (date.year == start_year and date.month < start_month):
+        stop_scraping = True  
+        break 
+      link = row.find("h2").a["href"]
+      title = row.find("h2").a.get_text(strip=True)
+      category = row.find("div").ul.get_text(strip=True)
+      row_list = [title,date,category,link]
+      table_list.append(row_list)
+    
+    page += 1
+    time.sleep(1)
+
+  tidy_df = pd.DataFrame(table_list, columns=["Title", "Date", "Category", "Link"])
+
+# # add up agency column 
+  agency_list =[]
+
+  for url in tidy_df["Link"]:
+    response = requests.get("https://oig.hhs.gov"+ url)
+    soup = BeautifulSoup(response.text, "html.parser")
+    the_span_tag = soup.find("span", text=lambda x: x and x.strip() == "Agency:")
+    if the_span_tag:
+      agency = the_span_tag.find_parent("li").get_text().replace("Agency:", "").strip()
+    else:
+      agency = "" 
+    agency_list.append(agency)
+
+
+  tidy_df["Agency"] = agency_list
+
+#output to a csv file
+  output_filename = f"enforcement_actions_{start_year}_{start_month}.csv"
+  tidy_df.to_csv(output_filename, index=False, encoding='utf-8')
+
+  return tidy_df
+
+df_2301 = fancy_scraper(2023,1)
+
+
+# obtain the number of enforcement actions
+num_2301 = df_2301.shape[0]
+print(f"There are {num_2301} enforcement actions since January 2023.")
+
+# obtain the detail of the earliest enforcement
+print(df_2301.tail(1))
+
+```
+
+
+* c. Test Partner's Code (PARTNER 1)
+
+```{python}
+df = fancy_scraper(2021,1)
+
+# obtain the number of enforcement actions
+num = df.shape[0]
+print(f"There are {num} enforcement actions since January 2021.")
+
+# obtain the detail of the earliest enforcement
+print(df.tail(1))
+
+```
+
+## Step 3: Plot data based on scraped data
+### 1. Plot the number of enforcement actions over time (PARTNER 2)
+
+```{python}
+chart = alt.Chart(df).mark_line().encode(
+    x=alt.X('yearmonth(Date):T', title='Month-Year'),  
+    y=alt.Y('count():Q', title='Number of Enforcement Actions')  
+).properties(width=400, height=300,
+    title="Number of Enforcement Actions Per Month Since January 2021"
+)
+
+chart.show()
+
+```
+
+### 2. Plot the number of enforcement actions categorized: (PARTNER 1)
+
+* based on "Criminal and Civil Actions" vs. "State Enforcement Agencies"
+
+```{python}
+chart = alt.Chart(df).mark_line().transform_filter(
+    alt.FieldOneOfPredicate(field='Category', oneOf=['Criminal and Civil Actions', 'State Enforcement Agencies'])
+).encode(
+    x=alt.X('yearmonth(Date):T', title='Month-Year'),  
+    y=alt.Y('count():Q', title='Number of Enforcement Actions'),  
+    color=alt.Color('Category:N', title='Category')  
+).properties(width=400, height=300,
+    title="Number of Enforcement Actions by Category Over Time"
+)
+
+chart
+```
+
+* based on five topics
+
+```{python}
+# filter for "Criminal and Civil Actions"
+df_cca = df[df["Category"]=="Criminal and Civil Actions"]
+
+# Define the categorization function based on the Title column
+def categorize_action(title):
+    title_lower = title.lower()
+    if any(word in title_lower for word in ['drug', 'narcotic', 'opioid', 'substance', 'distribution', 'prescription']):
+        return 'Drug Enforcement'
+    elif any(word in title_lower for word in ['bribery', 'corruption', 'bribe', 'kickback', 'graft']):
+        return 'Bribery/Corruption'
+    elif any(word in title_lower for word in ['financial', 'bank', 'money', 'investment', 'fund', 'fraud', 'billing', 'scheme']):
+        return 'Financial Fraud'
+    elif any(word in title_lower for word in ['health', 'care', 'hospital', 'medicare', 'medicaid', 'doctor', 'pharmacy']):
+        return 'Health Care Fraud'
+    else:
+        return 'Other' 
+
+# Apply the categorization function to the 'Title' column in your DataFrame
+df_cca['five_topic'] = df_cca['Title'].apply(categorize_action)
+
+```
+
+
+```{python}
+chart = alt.Chart(df_cca).mark_line().encode(
+    x=alt.X('yearmonth(Date):T', title='Month-Year'),
+    y=alt.Y('count():Q', title='Number of Enforcement Actions'),
+    color=alt.Color('five_topic:N', title='Five Topic')
+).properties( width=400, height=300,
+    title='Number of Enforcement Actions by Five Topic Category Over Time'
+)
+
+chart
+
+```
+
+## Step 4: Create maps of enforcement activity
+
+### 1. Map by State (PARTNER 1)
+
+```{python}
+# select rows with "Agency" column contains "State of"
+df_state = df[df['Agency'].str.contains('State of', na = False)]
+
+# clean the state name
+df_state['NAME'] = df_state['Agency'].str.replace('State of ','')
+
+# aggregate
+df_state_agg = df_state.groupby('NAME').size().reset_index(name = 'Count')
+
+# import geodata
+file_path = '/Users/tang/Desktop/1Python II/ProblemSet5/ve5/cb_2018_us_state_500k/cb_2018_us_state_500k.shp'
+
+geodata = gpd.read_file(file_path)
+
+# merge
+merge_state = geodata.merge(df_state_agg, on = 'NAME', how = 'left')
+
+
+```
+
+```{python}
+# merge_state only contains state in the contiguougs United States
+merge_state = merge_state.cx[-125:-66, 24:50]
+
+
+merge_state.plot(column="Count", 
+                edgecolor="white",
+                linewidth=0.2,
+                legend=True,
+                cmap="plasma",
+                missing_kwds={
+                    "color": "lightgray",
+                    "edgecolor": "white",
+                    "hatch": "///"
+                    })
+plt.axis("off")
+plt.title("MAP BY STATE", fontsize=16)
+plt.show()
+
+```
+
+
+### 2. Map by District (PARTNER 2)
+
+```{python}
+file_path_2 = '/Users/tang/Desktop/1Python II/ProblemSet5/ve5/US Attorney Districts Shapefile simplified_20241107/geo_export_406c52ee-4f0e-4671-9999-86ab3e0daa12.shp'
+
+attorney = gpd.read_file(file_path_2)
+# attorney.head()
+
+# select rows with "Agency" column contains "U.S. Attorney's Office, "
+df_dist = df[df['Agency'].str.contains("Attorney", na=False) & df['Agency'].str.contains("District", na=False)]
+
+# clean the state name
+df_dist['judicial_d'] = df_dist['Agency'].str.replace("U.S. Attorney's Office, ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Attorney’s Office, ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Attorney’s Office; ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("June 28, 2024: ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("†",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Department of Justice and ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("2021; ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("Connecticut Attorney General and ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Attorney General, ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Attorneyĺs Office, ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("U.S. Attorney’s Office ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("Attorney's Office, ",'')
+df_dist['judicial_d'] = df_dist['judicial_d'].str.replace("Attorney’s Office, ",'')
+
+# some judicial_d columns contain 2 unit, devide into two rows
+df_dist['judicial_d'] = df_dist['judicial_d'].apply(lambda x: x.split(' and ') if ' and ' in x else [x])
+df_dist = df_dist.explode('judicial_d')
+
+# strip
+df_dist['judicial_d'] = df_dist['judicial_d'].str.strip()
+
+# deal with detail
+df_dist.loc[df_dist['judicial_d'] == "Eastern District of Pennsylvani", 'judicial_d'] = "Eastern District of Pennsylvania"
+
+# aggregate
+df_dist_agg = df_dist.groupby('judicial_d').size().reset_index(name = 'Count')
+
+# merge
+merge_dist = attorney.merge(df_dist_agg, on = 'judicial_d', how = 'left')
+merge_dist.head()
+```
+
+
+```{python}
+# set central longitude and latitude for the Albers USA projection
+albers_usa_projection = ccrs.AlbersEqualArea(central_longitude=-96, central_latitude=37)
+
+# create canvas
+fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': albers_usa_projection})
+
+# Convert the data to the Albers USA projection
+map_dist_albers = merge_dist.to_crs(albers_usa_projection.proj4_init)
+
+# plot
+map_dist_albers.plot(
+    column="Count",
+    legend=True,
+    ax=ax,
+    edgecolor="white",
+    linewidth=0.2,
+    cmap="plasma",
+    missing_kwds={"color": "lightgray", "edgecolor": "white", "hatch": "///"}
+)
+
+ax.set_extent([-180, -60, 15, 72], crs=ccrs.PlateCarree())
+ax.axis("off")
+ax.set_title("Map BY DISTRICT", fontsize=14)
+plt.show()
+```
+
+
+## Extra Credit
+
+### 1. Merge zip code shapefile with population
+```{python}
+# import data
+popu = pd.read_csv('/Users/tang/Desktop/1Python II/ProblemSet5/ve5/DECENNIALDHC2020.P1_2024-11-08T205535/DECENNIALDHC2020.P1-Data.csv')
+
+zipgeo = gpd.read_file('/Users/tang/Desktop/1Python II/ProblemSet5/ve5/gz_2010_us_860_00_500k/gz_2010_us_860_00_500k.shp')
+zipgeo.head()
+
+# clean popu
+popudata = popu.iloc[1:,1:-1]
+popudata = popudata.rename(columns={"P1_001N":"Population"})
+popudata['NAME'] = popudata['NAME'].str.replace("ZCTA5 ",'')
+
+# merge
+merge_popu = zipgeo.merge(popudata, on = 'NAME', how = 'left')
+merge_popu.head()
+
+```
+
+### 2. Conduct spatial join
+```{python}
+
+dist_popu = gpd.sjoin(merge_popu, attorney, how="inner", predicate="within")
+# dist_popu.head()
+
+# change population to numeric format
+dist_popu["Population"] = pd.to_numeric(dist_popu["Population"])
+
+# aggregate
+dist_popu_agg = dist_popu.groupby("judicial_d")["Population"].sum().reset_index()
+
+# display
+dist_popu_agg.head() 
+
+```
+
+### 3. Map the action ratio in each district
+```{python}
+
+# merge
+merge_ratio = dist_popu_agg.merge(df_dist_agg, on = 'judicial_d', how = 'inner')
+
+# calculate ratio
+merge_ratio['ratio'] = merge_ratio['Count']/merge_ratio['Population']
+
+# merge for mapping
+map_ratio = attorney.merge(merge_ratio, on = 'judicial_d', how = 'left')
+
+
+```
+
+
+```{python}
+
+# create canvas
+fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': albers_usa_projection})
+
+# Convert the data to the Albers USA projection
+map_ratio_albers = map_ratio.to_crs(albers_usa_projection.proj4_init)
+
+# plot
+map_ratio_albers.plot(
+    column="ratio",
+    legend=True,
+    ax=ax,
+    edgecolor="white",
+    linewidth=0.2,
+    cmap="plasma",
+    missing_kwds={"color": "lightgray", "edgecolor": "white", "hatch": "///"}
+)
+
+ax.set_extent([-180, -60, 15, 72], crs=ccrs.PlateCarree())
+ax.axis("off")
+ax.set_title("THE RATIO OF INFORCEMENT", fontsize=14)
+plt.show()
+
+```
+
